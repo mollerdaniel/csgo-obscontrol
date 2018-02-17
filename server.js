@@ -9,6 +9,8 @@ var httpserver_host = '192.168.35.104';
 var remoteobs_host_port = '192.168.35.200:4444';
 var websocket_server_port = 8081;
 var playername = 'dmlr'
+var regularcsgoscene = 'Scene csgo' // expecting '<name> pause' to exist
+var multicamcsgoscene = 'Scene csgo multicam' // expecting '<name> pause' to exist
 
 // END CONFIG
 
@@ -17,6 +19,8 @@ var data = {}
 var roundkills = 0
 var dead = false
 var playing = true
+var usingMultiCamScene = false
+var useCSGOScene = regularcsgoscene;
 
 const OBSWebSocket = require('obs-websocket-js');
 const obs = new OBSWebSocket();
@@ -24,14 +28,13 @@ const wss = new WebSocket.Server({ port: websocket_server_port });
 
 // Eventlistener
 obs.onConnectionOpened(() => {
-  console.log('OBS Control: connected to OBS websocket');
+  console.log('[OBS Control] connected to OBS websocket');
   changePlayerKills(playername, 0)
   changePlayerHealth(playername, 100)
+  obs.onSwitchScenes(data => {
+    reactToSceneChange(data);
+  });
 });
-
-//obs.onSwitchScenes(data => {
-//  console.log(data);
-//});
 
 // Connect to remote OBS
 obs.connect({ address: remoteobs_host_port });
@@ -66,6 +69,24 @@ Object.prototype.hasOwnNestedProperty = function(propertyPath){
 
     return true;
 };
+function reactToSceneChange(data) {
+    if (data.hasOwnProperty('scene-name') && data.hasOwnProperty('update-type')) {
+        if (data['update-type'] == 'SwitchScenes') {
+            console.log('switched to Scene: ' + data['scene-name']);
+            if (data['scene-name'] == regularcsgoscene) {
+                usingMultiCamScene = false
+                useCSGOScene = regularcsgoscene
+                playing = true
+                console.log('Disabling Multicam mode');
+            } else if (data['scene-name'] == multicamcsgoscene) {
+                usingMultiCamScene = true
+                useCSGOScene = multicamcsgoscene
+                playing = true
+                console.log('Enabling Multicam mode');
+            }
+        }
+    }
+}
 
 function changePlayerKills(name, kills) {
   var sourceSettingsarr = { text: String(kills) }
@@ -76,17 +97,15 @@ function changePlayerKills(name, kills) {
 }
 
 function changePlayerActivity(name, activity) {
-	if (name == playername) {
-		if (!activity == 'playing' && playing) {
-			playing = false;
-			var sourceSettingsarr = { file: 'C:/Users/Daniel/Desktop/stream/dmlrpause15.mov' }
-			obs.SetSourceSettings({ sourceName: 'LOGO', sourceSettings: sourceSettingsarr }, (err, data) => {});
-		} else if (activity == 'playing' && !playing) {
-			playing = true;
-			var sourceSettingsarr = { file: 'C:/Users/Daniel/Desktop/stream/null.png' }
-			obs.SetSourceSettings({ sourceName: 'LOGO', sourceSettings: sourceSettingsarr }, (err, data) => {});
-		}
-	}
+    if (name == playername) {
+        if (activity != 'playing' && playing) {
+            playing = false;
+            obs.SetCurrentScene({'scene-name': useCSGOScene + ' pause'})
+        } else if (activity == 'playing' && !playing) {
+            playing = true;
+            obs.SetCurrentScene({'scene-name': useCSGOScene})
+        }
+    }
 }
 
 function changePlayerHealth(name, health) {
@@ -126,9 +145,6 @@ function parseCSGOData(incomingdata) {
   if (data.hasOwnNestedProperty('player.name')) {
     name = data.player.name
   }
-  if (data.hasOwnNestedProperty('player.activity')) {
-  	changePlayerActivity(name, data.player.state.activity);
-  }
   if (data.hasOwnNestedProperty('player.state.health')) {
       changePlayerHealth(name, data.player.state.health);
   }
@@ -136,6 +152,7 @@ function parseCSGOData(incomingdata) {
     changePlayerKills(name, data.player.state.round_kills);
   }
   if (data.hasOwnNestedProperty('player.activity')) {
+    changePlayerActivity(name, data.player.activity);
     if (data.player.activity == 'menu') {
       changePlayerKills(playername, 0)
       changePlayerHealth(playername, 100)
