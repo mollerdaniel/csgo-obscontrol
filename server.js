@@ -48,6 +48,8 @@ var debug_mode = false
 
 // -- END CONFIG --
 
+var isCompetitive = false
+var isLive = false
 var killCamSettings = {}
 var data = {}
 var roundkills = 0
@@ -118,7 +120,7 @@ function errorhandler(err, data) {
 function reactToSceneChange(data) {
     if (data.hasOwnProperty('scene-name') && data.hasOwnProperty('update-type')) {
         if (data['update-type'] == 'SwitchScenes') {
-            console.log('switched to Scene: ' + data['scene-name']);
+            console.log('[OBS] Switched to Scene: ' + data['scene-name']);
             if (data['scene-name'] == regularcsgoscene) {
                 usingMultiCamScene = false
                 useCSGOScene = regularcsgoscene
@@ -180,16 +182,18 @@ function changePlayerKills(name, kills) {
     if (name == playername && roundkills != kills) {
       obs.SetSourceSettings({ sourceName: killcount_text_source_name, sourceSettings: sourceSettingsarr }, (err, data) => {
         errorhandler(err, data)
-        if (kills == 3) {
-          playAudio('3kills')
-          triggered_sound = true
-        } else if (kills == 4) {
-          playAudio('4kills')
-          triggered_sound = true
-        } else if (kills == 5) {
-          toggleVisOnSceneItemByTriggerSource(ace_source_name, true)
-          playAudio('ace')
-          triggered_sound = true
+        if (isCompetitive && isLive) {
+          if (kills == 3) {
+            playAudio('3kills')
+            triggered_sound = true
+          } else if (kills == 4) {
+            playAudio('4kills')
+            triggered_sound = true
+          } else if (kills == 5) {
+            toggleVisOnSceneItemByTriggerSource(ace_source_name, true)
+            playAudio('ace')
+            triggered_sound = true
+          }
         }
         resolve(triggered_sound)
       });
@@ -250,9 +254,7 @@ function changeTeam(name, team) {
 }
 
 function changeScore(newscore, team, dontReactOnNextScoreChange) {
-  //console.log("IS CT " + isCounterTerrorist)
   if (newscore != score[team]) {
-    console.log("OLD SCORE: " + score[team] + " NEW SCORE: " + newscore + "DONTREACT" + dontReactOnNextScoreChange)
     if (newscore < score[team]) {
       score[team] = newscore
       return
@@ -280,6 +282,27 @@ function myTeam() {
   return 'team_t'
 }
 
+function changeMode(mode) {
+  if (mode == 'competitive') {
+    if (!isCompetitive) {
+      console.log('[CSGO] Changed to mode Competitive, enabling all the LULZ')
+    }
+    isCompetitive = true
+  } else {
+    isCompetitive = false
+  }
+}
+
+function changePhase(phase) {
+  if (phase == 'live') {
+    if (!isLive) {
+      console.log('[CSGO] We are Live!')
+    }
+    isLive = true
+  } else {
+    isLive = false
+  }
+}
 
 function parseCSGOData(incomingdata) {
   data = incomingdata
@@ -288,6 +311,12 @@ function parseCSGOData(incomingdata) {
   if (data.hasOwnNestedProperty('player.name')) {
     name = data.player.name
   }
+  if (data.hasOwnNestedProperty('map.mode')) {
+    changeMode(data.map.mode);
+  }
+  if (data.hasOwnNestedProperty('map.phase')) {
+    changePhase(data.map.phase);
+  }
   if (data.hasOwnNestedProperty('player.team')) {
     changeTeam(name, data.player.team);
   }
@@ -295,7 +324,6 @@ function parseCSGOData(incomingdata) {
     changePlayerHealth(name, data.player.state.health);
   }
   if (data.hasOwnNestedProperty('player.state.round_kills')) {
-    //triggered_sound = changePlayerKills(name, data.player.state.round_kills);
     changePlayerKills(name, data.player.state.round_kills).then((triggered_sound) => {
       if (triggered_sound) {
         dontReactOnNextScoreChange = score[myTeam()]
