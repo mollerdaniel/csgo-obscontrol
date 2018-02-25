@@ -16,7 +16,7 @@ var deathfx = {
     { source: 'DEATH', file: 'C:/Users/Daniel/Desktop/stream/null.png' },
     { source: 'DEATH2', file: 'C:/Users/Daniel/Desktop/stream/null.png' },
     { source: 'DEATH3', file: 'C:/Users/Daniel/Desktop/stream/null.png' },
-  ]
+  ],
   'dead': [
     { source: 'DEATH', file: 'C:/Users/Daniel/Desktop/stream/skull.png' },
     { source: 'DEATH2', file: 'C:/Users/Daniel/Desktop/stream/crack.png' },
@@ -29,17 +29,17 @@ var audio = {
   '3kills': ['C:/Users/Daniel/Desktop/stream/3kills.wav'],
   '4kills': [
     'C:/Users/Daniel/Desktop/stream/4kills.wav',
-    'C:/Users/Daniel/Desktop/stream/4kills2.wav'
+    'C:/Users/Daniel/Desktop/stream/4kills2.wav',
   ],
   'ace': [
     'C:/Users/Daniel/Desktop/stream/unbelivable.wav',
     'C:/Users/Daniel/Desktop/stream/kobe.wav',
     'C:/Users/Daniel/Desktop/stream/ace.wav',
-    'C:/Users/Daniel/Desktop/stream/ace2.wav'
-  ]
+    'C:/Users/Daniel/Desktop/stream/ace2.wav',
+  ],
   'round_win': [
-    'C:/Users/Daniel/Desktop/stream/round_win.wav'
-  ]
+    'C:/Users/Daniel/Desktop/stream/round_win.wav',
+  ],
 }
 var audio_source_name = { scene: 'Scene csgo LOLS', source: 'AUDIO' } // Source name of Audio container to play soundclips
 var killcount_text_source_name = 'KILLCOUNT' // Source name of Text to update with current killcount
@@ -57,6 +57,7 @@ var usingMultiCamScene = false
 var useCSGOScene = regularcsgoscene;
 var isCounterTerrorist = null;
 var score = { 'team_t': 0, 'team_ct': 0 }
+var dontReactOnNextScoreChange = -1
 
 const OBSWebSocket = require('obs-websocket-js');
 const obs = new OBSWebSocket();
@@ -104,8 +105,9 @@ Object.prototype.hasOwnNestedProperty = function(propertyPath){
 };
 
 function errorhandler(err, data) {
-  if (err !== null) {
-    console.log("[ERROR] " + err)
+  if (err != null) {
+    console.log("[ERROR]")
+    console.log(err)
   } else {
     if (debug_mode) {
       console.log("[DEBUG] " + data)
@@ -222,12 +224,12 @@ function changePlayerHealth(name, health) {
     } 
     if (newstate) {
       if (dead) {
-        deathfx.dead(function(element) {
-          obs.SetSourceSettings({ sourceName: element.souce, sourceSettings: { file: element.file } }, errorhandler);
+        deathfx.dead.forEach(function(element) {
+          obs.SetSourceSettings({ sourceName: element.source, sourceSettings: { file: element.file } }, errorhandler);
         });
       } else {
-        deathfx.alive(function(element) {
-          obs.SetSourceSettings({ sourceName: element.souce, sourceSettings: { file: element.file } }, errorhandler);
+        deathfx.alive.forEach(function(element) {
+          obs.SetSourceSettings({ sourceName: element.source, sourceSettings: { file: element.file } }, errorhandler);
         });
       }
     }
@@ -244,21 +246,41 @@ function changeTeam(name, team) {
   }
 }
 
-function changeScore(newscore, team, playing_other_sound) {
+function changeScore(newscore, team, dontReactOnNextScoreChange) {
+  //console.log("IS CT " + isCounterTerrorist)
   if (newscore != score[team]) {
-    score[team] = newscore;
+    console.log("OLD SCORE: " + score[team] + " NEW SCORE: " + newscore + "DONTREACT" + dontReactOnNextScoreChange)
+    if (newscore < score[team]) {
+      score[team] = newscore
+      return
+    } else {
+      score[team] = newscore;
+    }
+    if ((dontReactOnNextScoreChange + 1) == newscore) {
+      dontReactOnNextScoreChange = -1
+      return
+    }
     if (newscore == 0) {
       return
     }
-    if (((isCounterTerrorist && team == 'team_ct') || (!isCounterTerrorist && team == 'team_t')) && !playing_other_sound) {
+    if (((isCounterTerrorist && team == 'team_ct') || (!isCounterTerrorist && team == 'team_t'))) {
       playAudio('round_win')
     }
   } 
 }
 
+function myTeam() {
+  if (isCounterTerrorist) {
+    return 'team_ct'
+  }
+  return 'team_t'
+}
+
+
 function parseCSGOData(incomingdata) {
   data = incomingdata
   var name = 'unknown'
+  var triggered_sound = false
   if (data.hasOwnNestedProperty('player.name')) {
     name = data.player.name
   }
@@ -269,17 +291,26 @@ function parseCSGOData(incomingdata) {
     changePlayerHealth(name, data.player.state.health);
   }
   if (data.hasOwnNestedProperty('player.state.round_kills')) {
-    var triggered_sound = changePlayerKills(name, data.player.state.round_kills);
+    triggered_sound = changePlayerKills(name, data.player.state.round_kills);
+    console.log('triggered_sound: ' + triggered_sound)
+    if (triggered_sound) {
+      dontReactOnNextScoreChange = score[myTeam()]
+    }
   }
   if (data.hasOwnNestedProperty('player.activity')) {
     changePlayerActivity(name, data.player.activity);
     if (data.player.activity == 'menu') {
       changePlayerKills(playername, 0)
       changePlayerHealth(playername, 100)
+      changeScore(0, 'team_t')
+      changeScore(0, 'team_ct')
     }
   }
-  if (data.hasOwnNestedProperty('map.team_ct')) {
-    changeScore(data.map.team_ct, 'team_ct', triggered_sound);
+  if (data.hasOwnNestedProperty('map.team_ct.score')) {
+    changeScore(data.map.team_ct.score, 'team_ct', dontReactOnNextScoreChange);
+  }
+  if (data.hasOwnNestedProperty('map.team_t.score')) {
+    changeScore(data.map.team_t.score, 'team_t', dontReactOnNextScoreChange);
   }
 }
 
