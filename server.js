@@ -3,24 +3,60 @@ var http = require('http');
 var fs = require('fs');
 const WebSocket = require('ws');
 
-
-var httpserver_port = 8080;
-var httpserver_host = '192.168.35.104';
-var remoteobs_host_port = '192.168.35.200:4444';
+// -- CONFIG --
+var httpserver_port = 8080; // HTTP server port
+var httpserver_host = '192.168.35.104'; // HTTP server, listen address
+var remoteobs_host_port = '192.168.35.200:4444'; // OBS-websocket plugin endpoint (machine running OBS)
 var websocket_server_port = 8081;
-var playername = 'dmlr'
+var playername = 'dmlr' // ingame name of player streaming
 var regularcsgoscene = 'Scene csgo' // expecting '<name> pause' to exist
 var multicamcsgoscene = 'Scene csgo multicam' // expecting '<name> pause' to exist
+var deathfx = {
+  'alive': [
+    { source: 'DEATH', file: 'C:/Users/Daniel/Desktop/stream/null.png' },
+    { source: 'DEATH2', file: 'C:/Users/Daniel/Desktop/stream/null.png' },
+    { source: 'DEATH3', file: 'C:/Users/Daniel/Desktop/stream/null.png' },
+  ]
+  'dead': [
+    { source: 'DEATH', file: 'C:/Users/Daniel/Desktop/stream/skull.png' },
+    { source: 'DEATH2', file: 'C:/Users/Daniel/Desktop/stream/crack.png' },
+    { source: 'DEATH3', file: 'C:/Users/Daniel/Desktop/stream/blood.png' },
+  ]
+}
 
-// END CONFIG
+// List of audioclips and paths, will use random one if more than one in array
+var audio = {
+  '3kills': ['C:/Users/Daniel/Desktop/stream/3kills.wav'],
+  '4kills': [
+    'C:/Users/Daniel/Desktop/stream/4kills.wav',
+    'C:/Users/Daniel/Desktop/stream/4kills2.wav'
+  ],
+  'ace': [
+    'C:/Users/Daniel/Desktop/stream/unbelivable.wav',
+    'C:/Users/Daniel/Desktop/stream/kobe.wav',
+    'C:/Users/Daniel/Desktop/stream/ace.wav',
+    'C:/Users/Daniel/Desktop/stream/ace2.wav'
+  ]
+  'round_win': [
+    'C:/Users/Daniel/Desktop/stream/round_win.wav'
+  ]
+}
+var audio_source_name = { scene: 'Scene csgo LOLS', source: 'AUDIO' } // Source name of Audio container to play soundclips
+var killcount_text_source_name = 'KILLCOUNT' // Source name of Text to update with current killcount
+var ace_source_name = { scene: 'Scene csgo LOLS', source: 'ACE' } // Source name of Video file to play when player kills 5 ppl == Ace!
+var debug_mode = false
+
+// -- END CONFIG --
 
 var killCamSettings = {}
 var data = {}
 var roundkills = 0
-var dead = false
+var dead = true
 var playing = true
 var usingMultiCamScene = false
 var useCSGOScene = regularcsgoscene;
+var isCounterTerrorist = null;
+var score = { 'team_t': 0, 'team_ct': 0 }
 
 const OBSWebSocket = require('obs-websocket-js');
 const obs = new OBSWebSocket();
@@ -44,11 +80,8 @@ wss.on('connection', function connection(ws) {
   ws.on('message', function incoming(message) {
     console.log('[REMOTECONTROL] received: %s', message);
   });
-
   ws.send('something');
 });
-
-
 
 Object.prototype.hasOwnNestedProperty = function(propertyPath){
     if(!propertyPath)
@@ -69,6 +102,17 @@ Object.prototype.hasOwnNestedProperty = function(propertyPath){
 
     return true;
 };
+
+function errorhandler(err, data) {
+  if (err !== null) {
+    console.log("[ERROR] " + err)
+  } else {
+    if (debug_mode) {
+      console.log("[DEBUG] " + data)
+    }
+  }
+}
+
 function reactToSceneChange(data) {
     if (data.hasOwnProperty('scene-name') && data.hasOwnProperty('update-type')) {
         if (data['update-type'] == 'SwitchScenes') {
@@ -77,23 +121,77 @@ function reactToSceneChange(data) {
                 usingMultiCamScene = false
                 useCSGOScene = regularcsgoscene
                 playing = true
-                console.log('Disabling Multicam mode');
+                console.log('[Multicam mode] - Disabled');
             } else if (data['scene-name'] == multicamcsgoscene) {
                 usingMultiCamScene = true
                 useCSGOScene = multicamcsgoscene
                 playing = true
-                console.log('Enabling Multicam mode');
+                console.log('[Multicam mode] + Enabled');
             }
         }
     }
 }
 
+function toggleVisOnSceneItem(sourceobj, visible) {
+  obs.SetSceneItemProperties({ 'scene-name': sourceobj.scene, item: sourceobj.source, visible: false }, (err, data) => {
+    errorhandler(err, data)
+    if (visible) {
+      obs.SetSceneItemProperties({ 'scene-name': sourceobj.scene, item: sourceobj.source, visible: true }, (err, data) => {
+        console.log("Done showing " + sourceobj.source)
+        errorhandler(err, data)
+      });
+    }
+  });
+}
+
+function toggleVisOnSceneItemByTriggerSource(sourceobj, visible) {
+  if (visible) {
+    obs.GetSourceSettings({ sourceName: sourceobj.source }, (err, data) => {
+      errorhandler(err, data)
+      obs.SetSourceSettings({ sourceName: sourceobj.source, sourceSettings: { local_file: data.sourceSettings.local_file }})
+    });
+  }
+}
+
+function getRandomAudioClip(audiokey) {
+  var list = audio[audiokey]
+  var item = list[Math.floor(Math.random()*list.length)];
+  return item
+}
+
+function playAudio(audiokey) {
+  var filename = getRandomAudioClip(audiokey)
+  console.log("Playing audio for " + audiokey + " file: " + filename)
+  obs.SetSceneItemProperties({ 'scene-name': audio_source_name.scene, item: audio_source_name.source, visible: false }, (err, data) => {
+    errorhandler(err, data)
+    obs.SetSourceSettings({ sourceName: audio_source_name.source, sourceSettings: { local_file: filename } }, (err, data) => {
+      errorhandler(err, data)
+      obs.SetSceneItemProperties({ 'scene-name': audio_source_name.scene, item: audio_source_name.source, visible: true }, errorhandler);
+    });
+  });
+}
+
 function changePlayerKills(name, kills) {
   var sourceSettingsarr = { text: String(kills) }
+  var triggered_sound = false
   if (name == playername && roundkills != kills) {
-    obs.SetSourceSettings({ sourceName: 'KILLCOUNT', sourceSettings: sourceSettingsarr }, (err, data) => {});
+    obs.SetSourceSettings({ sourceName: killcount_text_source_name, sourceSettings: sourceSettingsarr }, (err, data) => {
+      errorhandler(err, data)
+      if (kills == 3) {
+        playAudio('3kills')
+        triggered_sound = true
+      } else if (kills == 4) {
+        playAudio('4kills')
+        triggered_sound = true
+      } else if (kills == 5) {
+        toggleVisOnSceneItemByTriggerSource(ace_source_name, true)
+        playAudio('ace')
+        triggered_sound = true
+      }
+    });
     roundkills = kills;
   }
+  return triggered_sound
 }
 
 function changePlayerActivity(name, activity) {
@@ -123,20 +221,39 @@ function changePlayerHealth(name, health) {
       dead = true;
     } 
     if (newstate) {
-       if (dead) {
-         sourceSettingsarr = { file: 'C:/Users/Daniel/Desktop/stream/skull.png' }
-         sourceSettingsarrTwo = { file: 'C:/Users/Daniel/Desktop/stream/crack.png' }
-         sourceSettingsarrThree = { file: 'C:/Users/Daniel/Desktop/stream/blood.png' }
-       } else {
-         sourceSettingsarr = { file: 'C:/Users/Daniel/Desktop/stream/null.png' }
-         sourceSettingsarrTwo = sourceSettingsarr
-         sourceSettingsarrThree = sourceSettingsarr
-       }
-       obs.SetSourceSettings({ sourceName: 'DEATH', sourceSettings: sourceSettingsarr }, (err, data) => {});
-       obs.SetSourceSettings({ sourceName: 'DEATH2', sourceSettings: sourceSettingsarrTwo }, (err, data) => {});
-       obs.SetSourceSettings({ sourceName: 'DEATH3', sourceSettings: sourceSettingsarrThree }, (err, data) => {});
+      if (dead) {
+        deathfx.dead(function(element) {
+          obs.SetSourceSettings({ sourceName: element.souce, sourceSettings: { file: element.file } }, errorhandler);
+        });
+      } else {
+        deathfx.alive(function(element) {
+          obs.SetSourceSettings({ sourceName: element.souce, sourceSettings: { file: element.file } }, errorhandler);
+        });
+      }
     }
   }
+}
+
+function changeTeam(name, team) {
+  if (name == playername) {
+    if (isCounterTerrorist != true && team == 'CT') {
+      isCounterTerrorist = true
+    } else if (isCounterTerrorist != false && team == 'T') {
+      isCounterTerrorist = false
+    }
+  }
+}
+
+function changeScore(newscore, team, playing_other_sound) {
+  if (newscore != score[team]) {
+    score[team] = newscore;
+    if (newscore == 0) {
+      return
+    }
+    if (((isCounterTerrorist && team == 'team_ct') || (!isCounterTerrorist && team == 'team_t')) && !playing_other_sound) {
+      playAudio('round_win')
+    }
+  } 
 }
 
 function parseCSGOData(incomingdata) {
@@ -145,11 +262,14 @@ function parseCSGOData(incomingdata) {
   if (data.hasOwnNestedProperty('player.name')) {
     name = data.player.name
   }
+  if (data.hasOwnNestedProperty('player.team')) {
+    changeTeam(name, data.player.team);
+  }
   if (data.hasOwnNestedProperty('player.state.health')) {
-      changePlayerHealth(name, data.player.state.health);
+    changePlayerHealth(name, data.player.state.health);
   }
   if (data.hasOwnNestedProperty('player.state.round_kills')) {
-    changePlayerKills(name, data.player.state.round_kills);
+    var triggered_sound = changePlayerKills(name, data.player.state.round_kills);
   }
   if (data.hasOwnNestedProperty('player.activity')) {
     changePlayerActivity(name, data.player.activity);
@@ -157,6 +277,9 @@ function parseCSGOData(incomingdata) {
       changePlayerKills(playername, 0)
       changePlayerHealth(playername, 100)
     }
+  }
+  if (data.hasOwnNestedProperty('map.team_ct')) {
+    changeScore(data.map.team_ct, 'team_ct', triggered_sound);
   }
 }
 
