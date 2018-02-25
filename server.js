@@ -176,24 +176,27 @@ function playAudio(audiokey) {
 function changePlayerKills(name, kills) {
   var sourceSettingsarr = { text: String(kills) }
   var triggered_sound = false
-  if (name == playername && roundkills != kills) {
-    obs.SetSourceSettings({ sourceName: killcount_text_source_name, sourceSettings: sourceSettingsarr }, (err, data) => {
-      errorhandler(err, data)
-      if (kills == 3) {
-        playAudio('3kills')
-        triggered_sound = true
-      } else if (kills == 4) {
-        playAudio('4kills')
-        triggered_sound = true
-      } else if (kills == 5) {
-        toggleVisOnSceneItemByTriggerSource(ace_source_name, true)
-        playAudio('ace')
-        triggered_sound = true
-      }
-    });
-    roundkills = kills;
-  }
-  return triggered_sound
+  var triggeredPromise = new Promise(function (resolve, reject) {
+    if (name == playername && roundkills != kills) {
+      obs.SetSourceSettings({ sourceName: killcount_text_source_name, sourceSettings: sourceSettingsarr }, (err, data) => {
+        errorhandler(err, data)
+        if (kills == 3) {
+          playAudio('3kills')
+          triggered_sound = true
+        } else if (kills == 4) {
+          playAudio('4kills')
+          triggered_sound = true
+        } else if (kills == 5) {
+          toggleVisOnSceneItemByTriggerSource(ace_source_name, true)
+          playAudio('ace')
+          triggered_sound = true
+        }
+        resolve(triggered_sound)
+      });
+      roundkills = kills;
+    }
+  })
+  return triggeredPromise
 }
 
 function changePlayerActivity(name, activity) {
@@ -260,6 +263,7 @@ function changeScore(newscore, team, dontReactOnNextScoreChange) {
       dontReactOnNextScoreChange = -1
       return
     }
+    dontReactOnNextScoreChange = -1
     if (newscore == 0) {
       return
     }
@@ -291,11 +295,12 @@ function parseCSGOData(incomingdata) {
     changePlayerHealth(name, data.player.state.health);
   }
   if (data.hasOwnNestedProperty('player.state.round_kills')) {
-    triggered_sound = changePlayerKills(name, data.player.state.round_kills);
-    console.log('triggered_sound: ' + triggered_sound)
-    if (triggered_sound) {
-      dontReactOnNextScoreChange = score[myTeam()]
-    }
+    //triggered_sound = changePlayerKills(name, data.player.state.round_kills);
+    changePlayerKills(name, data.player.state.round_kills).then((triggered_sound) => {
+      if (triggered_sound) {
+        dontReactOnNextScoreChange = score[myTeam()]
+      }
+    });
   }
   if (data.hasOwnNestedProperty('player.activity')) {
     changePlayerActivity(name, data.player.activity);
